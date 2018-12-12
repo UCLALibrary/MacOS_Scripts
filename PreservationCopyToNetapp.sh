@@ -1,15 +1,20 @@
 #!/bin/bash
 
-# Written in 2018 by Jonathan Wilson, UCLA Library
-#
-# Purpose: combine existing workflows related to
-# copying digitized files to long-term network storage
-# The script is divided into 4 sections:
-#     1: get and verify user input
-#     2: create md5 sidecar files
-#     3: copy files to remote directory
-#     4: compare file checksums
-#
+<<ABOUT_THIS_SCRIPT
+-----------------------------------------------------------------------
+Written in 2018 by Jonathan Wilson, UCLA Library
+
+Purpose: combine existing workflows related to copying digitized files to long-term network storage
+The script is divided into 4 sections:
+   1: get and verify user input
+   2: create md5 sidecar files
+   3: copy files to remote directory
+   4: compare file checksums
+
+Open multiple terminal windows to copy multiple directories at the same time
+-----------------------------------------------------------------------
+ABOUT_THIS_SCRIPT
+
 # Logs are saved to user's desktop
 log_location="$HOME/Desktop"
 
@@ -30,6 +35,16 @@ if [[ $dir_count -ge 2 ]]; then
   echo -e "   Subdirectories detected!\n   Please select a single directory containing only files.\n   Exiting."
   exit 1
 fi
+# check if file page contains spaces, if so exit
+case "$dir_source" in
+     *\ * )
+           echo -e "   Spaces in file path detected!\n   Please remove any spaces and try again.\n   Exiting."
+           exit 1
+          ;;
+esac
+
+
+
 
 # prompt user for destination path
 # check to see if destination exists as directory
@@ -40,74 +55,86 @@ if [ ! -d "$dir_remote" ]; then
   exit 1;
 fi
 
+# get human-readable size and name of source directory
+dir_source_size=$( du -h "$dir_source" | awk -F " " '{print$1}' )
+dir_source_name=$( basename "$dir_source" )
+
 # request user to confirm the action
-#echo "Continue? (y/n): "
+# echo "Continue? (y/n): "
 
 # get current time to use in time stamp and run time
 start_datetime=$(date +%Y-%m-%d_%H-%M-%S)
 epoch_start=$(date +%s)
-#create log file
+
+# create log file
 log_file="$log_location/prvcpylog_$start_datetime.txt"
 >> $log_file
+
 # write start time and action to log file
-echo -e "Script started at " $start_datetime " by " $USER "\n" >> $log_file
-echo -e "~~~ACTION~~~\n" | tee -a $log_file
-echo -e  $dir_source "\n  will be copied to \n" $dir_remote "\n" | tee -a $log_file
+echo -e "Script started at " $start_datetime " by " $USER >> $log_file
+echo -e "\n~~~ACTION~~~\n" | tee -a $log_file
+echo -e "$dir_source_name ($dir_source_size)\n"
+echo -e  $dir_source "\n  will be copied to \n" $dir_remote | tee -a $log_file
 
 #-----------------------------------------
 # SECTION 2: CREATE CHECKSUM SIDECAR FILES
 #-----------------------------------------
-echo -e "~~~CREATE SIDECAR FILES~~~\n" | tee -a $log_file
+echo -e "\n~~~CREATE SIDECAR FILES~~~\n" | tee -a $log_file
+cd "$dir_source"
 # read file list into an array
-filelist_src=(`find "$dir_source" -type f ! -name "\.*" ! -name "Thumbs.db"`)
+filelist_src=(`find "$dir_source" -type f ! -name "\.*" ! -name "Thumbs.db" ! -name "*.md5"`)
 
-# create .md5 file for each file in source directory
-cd $dir_source
+# loop through file list and create .md5 files for each one
 counter=0
 for file in ${filelist_src[@]}; do
-    if [[ ( ! -d $file ) && (! ${file: -4} == ".md5") ]]; then
-    filename="$(basename "$file")";
-    # only create the sidecar file if it does not already exist
-    if [[ ! -f "$filename".md5 ]]; then
-      md5 "$filename" > "$filename".md5
-      echo $filename >> $log_file
-      counter=$((counter + 1))
-    fi
+    if [[ ( ! -d $file ) ]]; then
+    filename="$file";
+      # only create the sidecar file if it does not already exist
+      if [[ ! -f "$filename".md5 ]]; then
+        # only write to log if operation succeeds
+        if ( md5 "$filename" > "$filename".md5 ); then
+          echo $( basename "$filename.md5" ) | tee -a $log_file
+          counter=$((counter + 1))
+        fi
+      fi
   fi
 done
-echo -e "$counter sidecar files created.\n" | tee -a $log_file
+#sidecar_count=$( find . -type f -name "*.md5" )
+echo -e "\n$counter sidecar files created." | tee -a $log_file
 
 #----------------------------------------
 # SECTION 3: COPY FILES TO REMOTE STORAGE
 #----------------------------------------
-echo -e "~~~COPY DIRECTORY~~~\n" | tee -a $log_file
-rsync -achv "$dir_source" "$dir_remote" --exclude .DS_Store | tee -a $log_file
+echo -e "\n~~~COPY DIRECTORY~~~\n" | tee -a $log_file
 
-echo -e "\n" | tee -a $log_file
+# -a = “archive”
+# -c = use checksum to determine files to copy
+# -h = summary numbers are human-readable
+# -v = verbose, show files that are copied
+rsync -achv "$dir_source" "$dir_remote" --exclude .DS_Store | tee -a $log_file
 
 #-----------------------------
 # SECTION 4: COMPARE CHECKSUMS
 #-----------------------------
-echo -e "~~~COMPARE COPIED FILE CHECKSUMS~~~\n" | tee -a $log_file
-echo -e "(sidecar | calculated) \n" | tee -a $log_file
-cd $dir_remote
+echo -e "\n~~~COMPARE COPIED FILE CHECKSUMS~~~\n" | tee -a $log_file
+echo -e "filename" | tee -a $log_file
+echo -e "    sidecar | calculated \n" | tee -a $log_file
+cd "$dir_remote/$dir_source_name"
 counter=0
 
-# read just-copied list into an array
-filelist_remote=(`find "$dir_remote" -type f ! -name "\.*" ! -name "Thumbs.db"`)
-
-# calculate checksum for each file in remote directory and compare to the sidecar file
-for file in ${filelist_remote[@]}; do
+# calculate checksum for each file that was just copied and compares it to the sidecar file
+# note: uses source directory file list in order to ignore any already existing files
+for file in ${filelist_src[@]}; do
   if [[ ( ! -d $file ) && (! ${file: -4} == ".md5") ]]; then
     filename="$(basename "$file")"
     # calculate checksum for the copied original file
-    md5_calculated="$(md5 $file | awk -F "= " '{print$2}')"
+    md5_calculated="$(md5 "$file" | awk -F "= " '{print$2}')"
     # get the checksum from the sidecar file
-    md5_sidecar="$(awk -F "= " '{print$2}' < $file.md5)"
+    md5_sidecar="$(awk -F "= " '{print$2}' < "$file".md5)"
     # print both checksums to the log along with the filename
-    echo -e $filename "\n" $md5_calculated "|" $md5_sidecar | tee -a $log_file
+    echo -e $filename "\n    " $md5_calculated "|" $md5_sidecar "\n" | tee -a $log_file
     if [[ $md5_sidecar != $md5_calculated ]]; then
-      echo "ERROR - CHECKSUMS FOR $filename DO NOT MATCH" | tee -a $log_file
+      echo -e "ERROR - CHECKSUMS FOR $filename DO NOT MATCH \n\n" | tee -a $log_file
       counter=$((counter +1))
     fi
     echo -e "\n"
@@ -139,7 +166,7 @@ function displaytime {
 # display additional message if there were any checksum errors
 if [[ counter -gt 0 ]]; then
   echo -e "   ********************************************\n \
-  $counter Checksum errors detected - check log file!\n \
+  $counter checksum errors detected - check log file!\n \
   ********************************************\n "
 fi
 
