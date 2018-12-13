@@ -35,15 +35,6 @@ if [[ $dir_count -ge 2 ]]; then
   echo -e "   Subdirectories detected!\n   Please select a single directory containing only files.\n   Exiting."
   exit 1
 fi
-# check if file page contains spaces, if so exit
-case "$dir_source" in
-     *\ * )
-           echo -e "   Spaces in file path detected!\n   Please remove any spaces and try again.\n   Exiting."
-           exit 1
-          ;;
-esac
-
-
 
 
 # prompt user for destination path
@@ -82,7 +73,9 @@ echo -e  $dir_source "\n  will be copied to \n" $dir_remote | tee -a $log_file
 echo -e "\n~~~CREATE SIDECAR FILES~~~\n" | tee -a $log_file
 cd "$dir_source"
 # read file list into an array
+IFS=$'\n'
 filelist_src=(`find "$dir_source" -type f ! -name "\.*" ! -name "Thumbs.db" ! -name "*.md5"`)
+unset $IFS
 
 # loop through file list and create .md5 files for each one
 counter=0
@@ -99,7 +92,7 @@ for file in ${filelist_src[@]}; do
       fi
   fi
 done
-#sidecar_count=$( find . -type f -name "*.md5" )
+
 echo -e "\n$counter sidecar files created." | tee -a $log_file
 
 #----------------------------------------
