@@ -1,2 +1,2 @@
 # MacOS_Scripts
-Miscellaneous scripts related to tasks and administration
+A collection of scripts related to administrative or other tasks in the UCLA Library
